@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Codex global installs no longer run hook scripts from the opened project. The personal install copied `.codex/hooks.json` to `~/.codex/hooks.json`, and every command in that file tried the project-relative `.codex/hooks/<script>.py` (or `.codex\hooks\pwf-hook.cmd` on Windows) before the installed copy. Codex runs hooks with the project folder as the working directory, so a repository that shipped its own `.codex/hooks/run_sh.py` ran its code under the already-trusted global hook, without a hook review prompt. The new `.codex/hooks.global.json` resolves every command only through `$HOME/.codex/hooks/` (`%USERPROFILE%\.codex\hooks\` on Windows), and `docs/codex.md` now installs that file. Existing global installs should replace their planning-with-files entries in `~/.codex/hooks.json` with the ones from `.codex/hooks.global.json`.
+
 ## [3.24.3] - 2026-10-17
 
 ### Security

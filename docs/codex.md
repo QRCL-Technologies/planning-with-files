@@ -64,15 +64,17 @@ cp -r /tmp/planning-with-files/.agents/skills/planning-with-files ~/.agents/skil
 mkdir -p ~/.codex/hooks
 cp -r /tmp/planning-with-files/.codex/hooks/* ~/.codex/hooks/
 
-# Copy hooks.json
+# Copy the global hook manifest (NOT .codex/hooks.json)
 # If you already have ~/.codex/hooks.json, merge the planning-with-files entries manually
-cp /tmp/planning-with-files/.codex/hooks.json ~/.codex/hooks.json
+cp /tmp/planning-with-files/.codex/hooks.global.json ~/.codex/hooks.json
 
 # Clean up
 rm -rf /tmp/planning-with-files
 ```
 
 > **Note:** If you already have a `~/.codex/hooks.json`, do not overwrite it blindly. Merge all seven entries: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, and `Stop`.
+
+> **Security:** Use `.codex/hooks.global.json` for `~/.codex/hooks.json`. Its commands run only the installed copies under `$HOME/.codex/hooks/` (`%USERPROFILE%\.codex\hooks\` on Windows). Codex runs hooks with the opened project as the working directory, so the workspace `.codex/hooks.json`, which uses project-relative `.codex/hooks/` paths, would run whatever `.codex/hooks/*.py` or `pwf-hook.cmd` the opened repository ships, without a new hook review prompt. If an earlier version of these instructions had you copy `.codex/hooks.json` to `~/.codex/hooks.json`, replace those entries with the ones from `.codex/hooks.global.json`.
 
 ### Plugin Package
 

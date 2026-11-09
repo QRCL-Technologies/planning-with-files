@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -294,7 +293,33 @@ def parse_json(text: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _windows_git_bash() -> tuple[str | None, list[str]]:
+def _windows_path_exe(name: str, untrusted_dirs: list[Path]) -> Path | None:
+    """Find ``name.exe`` on PATH without ever searching the working directory.
+
+    ``shutil.which`` and cmd.exe both search the current directory before PATH
+    on Windows, and Codex runs hooks with the (untrusted) project folder as the
+    current directory. A repository could otherwise plant ``sh.bat`` or
+    ``git.exe`` at its root and have the hook execute it. Only absolute PATH
+    entries are considered, only ``.exe`` files are accepted, and entries that
+    point at the project folder or the current directory are skipped.
+    """
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not entry or not os.path.isabs(entry):
+            continue
+        try:
+            directory = Path(entry).resolve()
+        except OSError:
+            continue
+        if directory in untrusted_dirs:
+            continue
+        candidate = directory / f"{name}.exe"
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _windows_git_bash(cwd: Path | None = None) -> tuple[str | None, list[str]]:
     """Locate git-for-windows sh.exe plus the unix-tools dirs the .sh hooks need.
 
     Returns (sh_path, extra_path_dirs). A default Git-for-Windows install puts
@@ -303,12 +328,23 @@ def _windows_git_bash() -> tuple[str | None, list[str]]:
     is not directly on PATH we anchor on git.exe (or the standard install roots)
     and probe for sh.exe and its sibling bin dirs. This is exactly issue #201:
     the reporter had git bash installed but its usr\\bin was not on PATH.
+
+    The project folder (``cwd``) and the process working directory are never
+    searched, so a repository cannot plant the shell the hooks execute.
     """
+    untrusted_dirs: list[Path] = []
+    for directory in (cwd, Path.cwd()):
+        if directory is None:
+            continue
+        try:
+            untrusted_dirs.append(Path(directory).resolve())
+        except OSError:
+            continue
+
     system32 = (Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32").resolve()
     for exe in ("sh", "bash"):
-        found = shutil.which(exe)
-        if found:
-            candidate = Path(found).resolve()
+        candidate = _windows_path_exe(exe, untrusted_dirs)
+        if candidate:
             parent = candidate.parent
             # Windows' bash.exe is a WSL launcher, not a POSIX shell. Selecting
             # it before Git Bash makes every shell hook fail when WSL has no
@@ -319,13 +355,13 @@ def _windows_git_bash() -> tuple[str | None, list[str]]:
                 return str(candidate), [str(parent)]
 
     roots: list[Path] = []
-    git = shutil.which("git")
+    git = _windows_path_exe("git", untrusted_dirs)
     if git:
         # <root>\cmd\git.exe or <root>\bin\git.exe -> <root>
-        roots.append(Path(git).resolve().parent.parent)
+        roots.append(git.resolve().parent.parent)
     for env_var in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
         base = os.environ.get(env_var)
-        if base:
+        if base and os.path.isabs(base):
             roots.append(Path(base) / "Git")
             roots.append(Path(base) / "Programs" / "Git")
 
@@ -356,7 +392,7 @@ def run_shell_script(
     if os.environ.get("PWF_PLAN_ROOT"):
         env["PWF_PLAN_ROOT"] = str(cwd)
     if os.name == "nt":
-        sh_path, extra_dirs = _windows_git_bash()
+        sh_path, extra_dirs = _windows_git_bash(cwd)
         if sh_path is None:
             # No git bash reachable: run nothing rather than crash. An advisory
             # hook must never surface an error (issue #201). docs/codex.md tells

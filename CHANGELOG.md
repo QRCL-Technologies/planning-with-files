@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Windows Codex hooks no longer run programs planted in the opened project. `pwf-hook.cmd` sets `NoDefaultCurrentDirectoryInExePath`, resolves `py.exe`/`python.exe` to absolute paths through `%SystemRoot%\System32\where.exe $PATH:...` and skips the project folder. `_windows_git_bash()` no longer uses `shutil.which`, which searches the current directory first on Windows; it only accepts `sh.exe`, `bash.exe` and `git.exe` from absolute PATH entries outside the project or from standard Git for Windows install roots.
+
 ## [3.24.3] - 2026-10-17
 
 ### Security

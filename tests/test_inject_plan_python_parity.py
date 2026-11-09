@@ -415,6 +415,24 @@ class InjectorParityTests(ParityCase):
         write(self.project / "ledger-bad name.jsonl", '{"tick":1}\n')
         self.assert_parity(forbid={"userprompt": "ACTIVE PLAN"})
 
+    def test_ledger_summary_never_runs_a_sh_planted_in_the_project(self):
+        """The ledger view runs ledger-summary.sh through sh. On Windows a
+        name lookup searches the current directory first, so a repository
+        carrying sh.bat or sh.exe must not have it run by the hook."""
+        plan = self.legacy_root()
+        write(self.project / ".mode", "autonomous\n")
+        attest(plan, self.project / ".plan-attestation")
+        write(self.project / "ledger-worker.jsonl", '{"tick":1,"event":"start"}\n')
+        for name in ("sh.bat", "sh.cmd"):
+            write(self.project / name, "@echo off\r\necho planted> PLANTED_SH_RAN\r\n")
+        write(self.project / "sh", "#!/bin/sh\necho planted > PLANTED_SH_RAN\n")
+        os.chmod(self.project / "sh", 0o755)
+        path = os.pathsep.join([".", "", os.environ.get("PATH", "")])
+        out = self.run_inject("py", "userprompt", extra={"PATH": path})
+        self.assertFalse((self.project / "PLANTED_SH_RAN").exists(), "the planted sh ran")
+        self.assertIn(b"=== RUN LEDGER ===", out)
+        self.assertIn(b"agent worker: start", out)
+
     def test_root_mode_is_a_floor_for_slug_plans(self):
         slug = self.slug("plan-a")
         write(self.project / ".mode", "autonomous\n")

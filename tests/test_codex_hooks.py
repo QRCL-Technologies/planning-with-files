@@ -446,6 +446,31 @@ class CodexHooksTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual("", result.stdout.strip())
 
+    def _windows_git_bash_with(self, path_dirs: list[Path], env_overrides: dict[str, str], cwd: Path):
+        sys.path.insert(0, str(HOOKS_DIR))
+        try:
+            import codex_hook_adapter as adapter
+
+            env = {"PATH": os.pathsep.join(str(d) for d in path_dirs), **env_overrides}
+            previous = Path.cwd()
+            os.chdir(cwd)
+            try:
+                with mock.patch.dict(os.environ, env):
+                    return adapter._windows_git_bash(cwd)
+            finally:
+                os.chdir(previous)
+        finally:
+            sys.path.pop(0)
+
+    @staticmethod
+    def _no_git_install_env(base: Path) -> dict[str, str]:
+        return {
+            "ProgramW6432": str(base),
+            "ProgramFiles": str(base),
+            "ProgramFiles(x86)": str(base),
+            "LOCALAPPDATA": str(base),
+        }
+
     @unittest.skipUnless(
         os.name == "nt",
         "Windows-shaped path; System32 comparison only meaningful on Windows",
@@ -454,27 +479,20 @@ class CodexHooksTests(unittest.TestCase):
         """A bare `bash` on PATH resolving into System32 is the WSL launcher.
 
         _windows_git_bash must never hand that path back to callers even when
-        it is the only `bash` shutil.which can see; it should keep looking
-        (and return a real Git-for-Windows sh.exe, or None) instead.
+        it is the only `bash` on PATH; it should keep looking (and return a
+        real Git-for-Windows sh.exe, or None) instead.
         """
-        sys.path.insert(0, str(HOOKS_DIR))
-        try:
-            import codex_hook_adapter as adapter
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            system32 = base / "Windows" / "System32"
+            system32.mkdir(parents=True)
+            system32.joinpath("bash.exe").write_bytes(b"")
+            project = base / "project"
+            project.mkdir()
+            env = {"SystemRoot": str(base / "Windows"), **self._no_git_install_env(base)}
+            sh_path, _ = self._windows_git_bash_with([system32], env, project)
 
-            def fake_which(exe, *args, **kwargs):
-                if exe == "sh":
-                    return None
-                if exe == "bash":
-                    return r"C:\windows\system32\bash.EXE"
-                return None
-
-            with mock.patch.object(adapter.shutil, "which", side_effect=fake_which):
-                sh_path, _ = adapter._windows_git_bash()
-        finally:
-            sys.path.pop(0)
-
-        if sh_path is not None:
-            self.assertNotIn("system32", sh_path.lower())
+        self.assertIsNone(sh_path)
 
     @unittest.skipUnless(
         os.name == "nt",
@@ -483,27 +501,90 @@ class CodexHooksTests(unittest.TestCase):
     def test_windows_git_bash_rejects_wsl_launcher_in_windowsapps(self) -> None:
         """The Microsoft Store WSL alias lives under WindowsApps, not System32.
 
-        Even a working WSL bash there cannot execute C:\\ script paths, so
+        Even a working WSL bash there cannot execute C: script paths, so
         _windows_git_bash must reject it the same way it rejects System32.
         """
-        sys.path.insert(0, str(HOOKS_DIR))
-        try:
-            import codex_hook_adapter as adapter
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            windows_apps = base / "Microsoft" / "WindowsApps"
+            windows_apps.mkdir(parents=True)
+            windows_apps.joinpath("bash.exe").write_bytes(b"")
+            project = base / "project"
+            project.mkdir()
+            sh_path, _ = self._windows_git_bash_with(
+                [windows_apps], self._no_git_install_env(base), project
+            )
 
-            def fake_which(exe, *args, **kwargs):
-                if exe == "sh":
-                    return None
-                if exe == "bash":
-                    return r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\bash.exe"
-                return None
+        self.assertIsNone(sh_path)
 
-            with mock.patch.object(adapter.shutil, "which", side_effect=fake_which):
-                sh_path, _ = adapter._windows_git_bash()
-        finally:
-            sys.path.pop(0)
+    @unittest.skipUnless(os.name == "nt", "binary planting via the current directory is Windows-only")
+    def test_windows_git_bash_ignores_shell_planted_in_project(self) -> None:
+        """A repository must not be able to supply the shell the hooks execute.
 
-        if sh_path is not None:
-            self.assertNotIn("windowsapps", sh_path.lower())
+        shutil.which searches the current directory first on Windows, so a
+        project-local sh.bat/sh.exe/bash.exe/git.exe used to win. Neither the
+        working directory, a relative PATH entry, nor a PATH entry pointing at
+        the project may be searched; the trusted install must be chosen.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            project = base / "project"
+            project.mkdir()
+            for planted in ("sh.bat", "sh.cmd", "sh.exe", "bash.bat", "bash.exe", "git.bat", "git.exe"):
+                project.joinpath(planted).write_bytes(b"")
+            trusted_bin = base / "Git" / "usr" / "bin"
+            trusted_bin.mkdir(parents=True)
+            trusted_bin.joinpath("sh.exe").write_bytes(b"")
+
+            on_path, _ = self._windows_git_bash_with(
+                [Path("."), project, trusted_bin], self._no_git_install_env(base / "none"), project
+            )
+            via_install_root, _ = self._windows_git_bash_with(
+                [Path("."), project], self._no_git_install_env(base), project
+            )
+
+        self.assertEqual(str(trusted_bin / "sh.exe"), on_path)
+        self.assertEqual(str(trusted_bin / "sh.exe"), via_install_root)
+
+    @unittest.skipUnless(os.name == "nt", "pwf-hook.cmd is the Windows launcher")
+    def test_pwf_hook_cmd_ignores_interpreters_planted_in_project(self) -> None:
+        """cmd.exe runs py.bat/python.bat/where.bat from the current directory
+        before PATH; the launcher must never pick up project-local programs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir).resolve()
+            hook_dir = base / "hooks"
+            hook_dir.mkdir()
+            hook_dir.joinpath("pwf-hook.cmd").write_bytes((HOOKS_DIR / "pwf-hook.cmd").read_bytes())
+            hook_dir.joinpath("probe.py").write_text(
+                "import sys\nprint(sys.executable)\n", encoding="utf-8"
+            )
+            project = base / "project"
+            project.mkdir()
+            for name in ("py", "python", "where"):
+                for ext in ("bat", "cmd"):
+                    project.joinpath(f"{name}.{ext}").write_text(
+                        f'@echo off\r\necho planted> "%~dp0marker-{name}-{ext}.txt"\r\n',
+                        encoding="ascii",
+                    )
+            env = os.environ.copy()
+            env.pop("PYTHON_BIN", None)
+            env.pop("NoDefaultCurrentDirectoryInExePath", None)
+            env["PATH"] = os.pathsep.join([".", str(project), str(Path(sys.executable).parent), env.get("PATH", "")])
+            result = subprocess.run(
+                ["cmd", "/c", str(hook_dir / "pwf-hook.cmd"), "probe.py"],
+                cwd=str(project),
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            markers = sorted(p.name for p in project.glob("marker-*"))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([], markers)
+        selected = result.stdout.strip()
+        self.assertTrue(selected, result.stderr)
+        self.assertNotEqual(project, Path(selected).resolve().parent)
 
 
 if __name__ == "__main__":

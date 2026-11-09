@@ -206,6 +206,8 @@ Hooks run on Windows. Codex reads a per-hook `commandWindows` override from `.co
 
 On Windows every hook routes through `.codex\hooks\pwf-hook.cmd`, which finds a real Python (`py -3`, falling back to `python`) and never the Microsoft Store `python3` alias. Plugin installs use a quote-free PowerShell entry command before that launcher so cache paths containing spaces work with Codex's Windows hook runner. The four Python hooks run their `.py` entry point directly. The three shell hooks (SessionStart, UserPromptSubmit, PreCompact) route through `run_sh.py`, which locates the Git for Windows `sh.exe` and runs the same shell scripts the macOS/Linux hooks use.
 
+Both lookups ignore the project folder. Codex starts hooks with the project as the current directory, and Windows normally searches the current directory before PATH, so the launcher and adapter only accept absolute `.exe` paths from PATH entries outside the project, or from the standard install locations. A repository cannot supply its own `py`, `python`, `sh`, `bash` or `git`.
+
 Requirements on Windows:
 
 - Hooks must not be explicitly disabled in user or managed configuration.

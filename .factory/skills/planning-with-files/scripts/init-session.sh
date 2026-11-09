@@ -109,21 +109,36 @@ slugify() {
 }
 
 short_uuid() {
-    # Probe each candidate: command -v alone is not enough on Windows because
-    # App Execution Aliases report presence but exit non-zero when run.
-    _py="${PYTHON_BIN:-}"
-    if [ -z "$_py" ]; then
-        for _c in python3 python py; do
-            if command -v "$_c" >/dev/null 2>&1 && "$_c" -c "import uuid" >/dev/null 2>&1; then
-                _py="$_c"
-                break
-            fi
-        done
+    # Prefer the kernel CSPRNG: no interpreter, so nothing in the project
+    # directory can be imported or executed to produce the nonce.
+    if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then
+        _hex="$(od -An -N4 -tx1 /dev/urandom 2>/dev/null | tr -d ' 
+')"
+        case "$_hex" in
+            [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+                printf '%s
+' "$_hex"
+                return
+                ;;
+        esac
     fi
-    if [ -n "$_py" ]; then
-        "$_py" -c "import uuid; print(uuid.uuid4().hex[:8])"
-        return
-    fi
+    # Python fallback. -I (isolated mode) keeps the current directory off
+    # sys.path, so a project-planted uuid.py cannot shadow the stdlib module.
+    # Only absolute interpreter paths are accepted, matching the trusted
+    # selection in inject-plan.sh; command -v alone is not enough on Windows
+    # because App Execution Aliases report presence but exit non-zero when run.
+    for _c in "${PYTHON_BIN:-}" "$(command -v python3 2>/dev/null)"               "$(command -v python 2>/dev/null)" "$(command -v py 2>/dev/null)"; do
+        case "$_c" in
+            /*) ;;
+            *) continue ;;
+        esac
+        [ -f "$_c" ] && [ -x "$_c" ] || continue
+        if _hex="$("$_c" -I -c "import uuid; print(uuid.uuid4().hex[:8])" 2>/dev/null)"             && [ -n "$_hex" ]; then
+            printf '%s
+' "$_hex"
+            return
+        fi
+    done
     if command -v uuidgen >/dev/null 2>&1; then
         uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-' | cut -c1-8
         return

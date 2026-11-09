@@ -208,6 +208,42 @@ class AutonomousLegacyRootModeTests(InitModesTestBase):
             self.assertFalse((other / ".plan-attestation").exists())
             self.assertFalse((root / ".planning").exists())
 
+class NonceInterpreterIsolationTests(InitModesTestBase):
+    """A project-planted uuid.py must never run while init-session.sh mints a nonce."""
+
+    PLANTED = (
+        "import pathlib\n"
+        "pathlib.Path(__file__).with_name('HIJACKED').write_text('x')\n"
+        "def uuid4():\n"
+        "    raise SystemExit('hijacked')\n"
+    )
+
+    def test_root_mode_inherit_does_not_import_project_uuid_py(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "uuid.py").write_text(self.PLANTED, encoding="utf-8")
+            (root / ".mode").write_text("autonomous\n", encoding="utf-8")
+            result = self.run_init(root, "demo")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse((root / "HIJACKED").exists(), "project uuid.py was imported")
+            nonce = (self.only_plan_dir(root) / ".nonce").read_text(encoding="utf-8").strip()
+            self.assertRegex(nonce, r"^[0-9a-f]{16}$")
+
+    def test_untitled_slug_does_not_import_project_uuid_py(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "uuid.py").write_text(self.PLANTED, encoding="utf-8")
+            result = self.run_init(root, "--plan-dir", "--autonomous")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertFalse((root / "HIJACKED").exists(), "project uuid.py was imported")
+
+    def test_short_uuid_python_calls_are_isolated(self) -> None:
+        source = INIT_SH.read_text(encoding="utf-8")
+        body = source[source.index("short_uuid() {"):source.index("gen_nonce() {")]
+        calls = re.findall(r'"\$_c"\s+(\S+)\s+-c', body)
+        self.assertTrue(calls, "expected a Python fallback in short_uuid")
+        self.assertTrue(all(flag == "-I" for flag in calls), calls)
+
 
 if __name__ == "__main__":
     unittest.main()

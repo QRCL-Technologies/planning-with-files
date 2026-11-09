@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- `init-session.sh` no longer imports a project-planted `uuid.py` when minting the v3 `.nonce` or an untitled slug. `short_uuid` now reads `/dev/urandom`, and its Python fallback runs absolute interpreter paths with `-I`, matching the other hook scripts.
+
 ## [3.24.3] - 2026-10-17
 
 ### Security

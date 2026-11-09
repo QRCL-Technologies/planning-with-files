@@ -1,0 +1,91 @@
+{
+  "description": "Codex lifecycle hooks for planning-with-files global installs (~/.codex/hooks.json). Every command resolves only through the installed copy under the user's home directory, never the opened project.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/run_sh.py\" session-start.sh 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHIAdQBuAF8AcwBoAC4AcAB5ACAAcwBlAHMAcwBpAG8AbgAtAHMAdABhAHIAdAAuAHMAaAA=",
+            "statusMessage": "Loading planning context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/run_sh.py\" user-prompt-submit.sh 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHIAdQBuAF8AcwBoAC4AcAB5ACAAdQBzAGUAcgAtAHAAcgBvAG0AcAB0AC0AcwB1AGIAbQBpAHQALgBzAGgA"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/pre_tool_use.py\" 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHAAcgBlAF8AdABvAG8AbABfAHUAcwBlAC4AcAB5AA==",
+            "statusMessage": "Checking plan before tool use"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/permission_request.py\" 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHAAZQByAG0AaQBzAHMAaQBvAG4AXwByAGUAcQB1AGUAcwB0AC4AcAB5AA=="
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/post_tool_use.py\" 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHAAbwBzAHQAXwB0AG8AbwBsAF8AdQBzAGUALgBwAHkA",
+            "statusMessage": "Reviewing changes against plan"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/run_sh.py\" pre-compact.sh 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHIAdQBuAF8AcwBoAC4AcAB5ACAAcAByAGUALQBjAG8AbQBwAGEAYwB0AC4AcwBoAA==",
+            "statusMessage": "Preparing planning context before compact"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.codex/hooks/stop.py\" 2>/dev/null || true",
+            "commandWindows": "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand JgAgACgASgBvAGkAbgAtAFAAYQB0AGgAIAAkAGUAbgB2ADoAVQBTAEUAUgBQAFIATwBGAEkATABFACAAJwAuAGMAbwBkAGUAeABcAGgAbwBvAGsAcwBcAHAAdwBmAC0AaABvAG8AawAuAGMAbQBkACcAKQAgAHMAdABvAHAALgBwAHkA",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

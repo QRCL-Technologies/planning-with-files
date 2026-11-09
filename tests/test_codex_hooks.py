@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import os
@@ -14,6 +15,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CODEX_ROOT = REPO_ROOT / ".codex"
 HOOKS_JSON = CODEX_ROOT / "hooks.json"
+GLOBAL_HOOKS_JSON = CODEX_ROOT / "hooks.global.json"
 HOOKS_DIR = CODEX_ROOT / "hooks"
 
 
@@ -504,6 +506,157 @@ class CodexHooksTests(unittest.TestCase):
 
         if sh_path is not None:
             self.assertNotIn("windowsapps", sh_path.lower())
+
+
+class CodexGlobalHooksTests(unittest.TestCase):
+    """The global manifest must never execute scripts from the opened project.
+
+    Codex runs ~/.codex/hooks.json with the project folder as the working
+    directory, so any project-relative path would let a repository that ships
+    its own .codex/hooks/*.py run code under an already-trusted hook.
+    """
+
+    MARKER = "pwn-marker.txt"
+
+    def load(self, path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def iter_hooks(self, payload: dict):
+        for event, entries in payload["hooks"].items():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    yield event, entry, hook
+
+    @staticmethod
+    def decode_windows(command: str) -> str:
+        prefix = "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand "
+        if not command.startswith(prefix):
+            raise AssertionError(f"unexpected commandWindows form: {command!r}")
+        return base64.b64decode(command[len(prefix):]).decode("utf-16-le")
+
+    def test_global_manifest_matches_workspace_events_and_matchers(self) -> None:
+        workspace = self.load(HOOKS_JSON)
+        global_ = self.load(GLOBAL_HOOKS_JSON)
+        self.assertEqual(set(workspace["hooks"]), set(global_["hooks"]))
+        for event, entries in workspace["hooks"].items():
+            g_entries = global_["hooks"][event]
+            self.assertEqual(len(entries), len(g_entries), event)
+            for w_entry, g_entry in zip(entries, g_entries):
+                self.assertEqual(w_entry.get("matcher"), g_entry.get("matcher"), event)
+                for w_hook, g_hook in zip(w_entry["hooks"], g_entry["hooks"]):
+                    for key in ("type", "statusMessage", "timeout"):
+                        self.assertEqual(w_hook.get(key), g_hook.get(key), f"{event} {key}")
+
+    def test_global_manifest_uses_only_home_paths(self) -> None:
+        for event, _entry, hook in self.iter_hooks(self.load(GLOBAL_HOOKS_JSON)):
+            command = hook["command"]
+            self.assertTrue(
+                command.startswith('python3 "$HOME/.codex/hooks/'),
+                f"{event} POSIX command is not anchored at $HOME: {command!r}",
+            )
+            self.assertEqual(1, command.count(".codex/hooks/"), f"{event} has an extra hook path")
+            self.assertTrue(command.endswith(" 2>/dev/null || true"), event)
+
+            windows = self.decode_windows(hook["commandWindows"])
+            self.assertTrue(
+                windows.startswith("& (Join-Path $env:USERPROFILE '.codex\\hooks\\pwf-hook.cmd') "),
+                f"{event} Windows command is not anchored at USERPROFILE: {windows!r}",
+            )
+            self.assertEqual(1, windows.count(".codex\\hooks\\"), f"{event} has an extra hook path")
+
+    def make_hostile_repo(self, root: Path) -> None:
+        hostile_hooks = root / ".codex" / "hooks"
+        hostile_hooks.mkdir(parents=True)
+        payload = (
+            "from pathlib import Path\n"
+            f"Path({str(root / self.MARKER)!r}).write_text('owned', encoding='utf-8')\n"
+        )
+        for name in ("run_sh.py", "pre_tool_use.py", "permission_request.py", "post_tool_use.py", "stop.py"):
+            (hostile_hooks / name).write_text(payload, encoding="utf-8")
+        (hostile_hooks / "pwf-hook.cmd").write_text(
+            f'@echo off\r\necho owned> "{root / self.MARKER}"\r\n', encoding="utf-8"
+        )
+
+    def install_global(self, home: Path) -> None:
+        shutil.copytree(HOOKS_DIR, home / ".codex" / "hooks")
+        shutil.copy2(GLOBAL_HOOKS_JSON, home / ".codex" / "hooks.json")
+
+    def posix_shell(self) -> tuple[str, dict]:
+        env = os.environ.copy()
+        shell = shutil.which("sh")
+        if os.name == "nt":
+            sys.path.insert(0, str(HOOKS_DIR))
+            try:
+                import codex_hook_adapter as adapter
+
+                shell, extra_path_dirs = adapter._windows_git_bash()
+            finally:
+                sys.path.pop(0)
+            if extra_path_dirs:
+                env["PATH"] = os.pathsep.join([*extra_path_dirs, env.get("PATH", "")])
+        if shell is None:
+            raise unittest.SkipTest("POSIX sh is unavailable")
+        return shell, env
+
+    def run_posix(self, command: str, repo: Path, home: Path) -> subprocess.CompletedProcess[str]:
+        shell, env = self.posix_shell()
+        env["HOME"] = home.as_posix()
+        env["PYTHON_BIN"] = sys.executable
+        python = Path(sys.executable).as_posix()
+        command = command.replace("python3 ", f'"{python}" ')
+        return subprocess.run(
+            [shell, "-c", command],
+            input=json.dumps({"cwd": str(repo), "hook_event_name": "SessionStart"}),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            cwd=str(repo),
+            env=env,
+            check=False,
+        )
+
+    def test_global_posix_commands_ignore_project_hook_scripts(self) -> None:
+        with tempfile.TemporaryDirectory() as repo_dir, tempfile.TemporaryDirectory() as home_dir:
+            repo, home = Path(repo_dir), Path(home_dir)
+            self.make_hostile_repo(repo)
+            self.install_global(home)
+            marker = repo / self.MARKER
+
+            # Control: the workspace manifest resolves against the project folder.
+            workspace_cmd = self.load(HOOKS_JSON)["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+            self.run_posix(workspace_cmd, repo, home)
+            self.assertTrue(marker.exists(), "control failed: hostile script was not reachable")
+            marker.unlink()
+
+            for event, _entry, hook in self.iter_hooks(self.load(home / ".codex" / "hooks.json")):
+                result = self.run_posix(hook["command"], repo, home)
+                self.assertEqual(0, result.returncode, f"{event}: {result.stderr}")
+                self.assertFalse(marker.exists(), f"{event} executed the project's hook script")
+
+    @unittest.skipUnless(os.name == "nt", "commandWindows only runs on Windows")
+    def test_global_windows_commands_ignore_project_hook_scripts(self) -> None:
+        with tempfile.TemporaryDirectory() as repo_dir, tempfile.TemporaryDirectory() as home_dir:
+            repo, home = Path(repo_dir), Path(home_dir)
+            self.make_hostile_repo(repo)
+            self.install_global(home)
+            marker = repo / self.MARKER
+            env = os.environ.copy()
+            env["USERPROFILE"] = str(home)
+            env["PYTHON_BIN"] = sys.executable
+
+            for event, _entry, hook in self.iter_hooks(self.load(home / ".codex" / "hooks.json")):
+                result = subprocess.run(
+                    hook["commandWindows"],
+                    input=json.dumps({"cwd": str(repo), "hook_event_name": event}),
+                    text=True,
+                    encoding="utf-8",
+                    capture_output=True,
+                    cwd=str(repo),
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(0, result.returncode, f"{event}: {result.stderr}")
+                self.assertFalse(marker.exists(), f"{event} executed the project's hook script")
 
 
 if __name__ == "__main__":

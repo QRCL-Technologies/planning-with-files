@@ -74,7 +74,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import stat
 import subprocess
 import sys
@@ -108,6 +107,29 @@ _TS_OFFSET_RE = re.compile(rb"T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([+-][0-9]{2
 _CONTROL_TO_SPACE = bytes.maketrans(
     bytes(list(range(1, 10)) + list(range(11, 32))), b" " * 30
 )
+
+
+def trusted_sh(env=None):
+    """Absolute path of a POSIX sh from absolute PATH entries only, or None.
+
+    shutil.which() is not used: on Windows it searches the current directory
+    (the project) before PATH, so a repository could plant sh.bat or sh.exe
+    and have a hook run it. Relative and empty PATH entries are skipped for
+    the same reason, the same rule skill-hook.sh applies when it picks the
+    Python. On Windows only sh.exe is accepted; a .bat/.cmd is not a POSIX sh.
+    """
+    env = os.environ if env is None else env
+    name = "sh.exe" if os.name == "nt" else "sh"
+    for entry in (env.get("PATH") or "").split(os.pathsep):
+        entry = entry.strip('"')
+        if not entry or not os.path.isabs(entry):
+            continue
+        if os.name == "nt" and not os.path.splitdrive(entry)[0]:
+            continue
+        candidate = os.path.join(entry, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 class Bail(Exception):
@@ -1409,7 +1431,7 @@ class Injector(object):
         # without a sh this twin cannot answer at all, so it must not answer
         # with an empty ledger. The exception reaches main(), which reports
         # "could not run" and lets the launcher fall back.
-        sh = shutil.which("sh")
+        sh = trusted_sh()
         if not sh:
             raise RuntimeError("ledger-summary.sh needs a POSIX sh")
         result = subprocess.run(

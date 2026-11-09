@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- The `inject-plan.py` fast path no longer finds `sh` with `shutil.which()` before it runs `ledger-summary.sh`. On Windows that lookup checked the project directory first, so a repository could plant `sh.bat` or `sh.exe` and have it run on every prompt in autonomous or gated mode. The twin now uses only `sh` (or `sh.exe` on Windows) from absolute `PATH` entries.
+
 ## [3.24.3] - 2026-10-17
 
 ### Security
